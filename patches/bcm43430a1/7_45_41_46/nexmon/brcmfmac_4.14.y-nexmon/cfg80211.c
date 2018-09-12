@@ -222,12 +222,12 @@ static const u32 brcmf_cipher_suites[] = {
 	WLAN_CIPHER_SUITE_AES_CMAC
 };
 
-/* Vendor specific ie. id = 221, oui and type defines exact ie */
+/* Vendor specific ie. id = 221 or custom IE */
 struct brcmf_vs_tlv {
 	u8 id;
 	u8 len;
-	u8 oui[3];
-	u8 oui_type;
+	u8 oui[3]; /* Only valid if id == 221 */
+	u8 oui_type; /* Only valid if id == 221 */
 };
 
 struct parsed_vndr_ie_info {
@@ -4332,37 +4332,40 @@ brcmf_parse_vndr_ies(const u8 *vndr_ie_buf, u32 vndr_ie_len,
 
 	ie = (struct brcmf_tlv *)vndr_ie_buf;
 	while (ie) {
-		if (ie->id != WLAN_EID_VENDOR_SPECIFIC)
-			goto next;
 		vndrie = (struct brcmf_vs_tlv *)ie;
-		/* len should be bigger than OUI length + one */
-		if (vndrie->len < (VS_IE_FIXED_HDR_LEN - TLV_HDR_LEN + 1)) {
-			brcmf_err("invalid vndr ie. length is too small %d\n",
-				  vndrie->len);
-			goto next;
-		}
-		/* if wpa or wme ie, do not add ie */
-		if (!memcmp(vndrie->oui, (u8 *)WPA_OUI, TLV_OUI_LEN) &&
-		    ((vndrie->oui_type == WPA_OUI_TYPE) ||
-		    (vndrie->oui_type == WME_OUI_TYPE))) {
-			brcmf_dbg(TRACE, "Found WPA/WME oui. Do not add it\n");
-			goto next;
-		}
 
 		parsed_info = &vndr_ies->ie_info[vndr_ies->count];
-
-		/* save vndr ie information */
-		parsed_info->ie_ptr = (char *)vndrie;
-		parsed_info->ie_len = vndrie->len + TLV_HDR_LEN;
-		memcpy(&parsed_info->vndrie, vndrie, sizeof(*vndrie));
-
-		vndr_ies->count++;
-
-		brcmf_dbg(TRACE, "** OUI %02x %02x %02x, type 0x%02x\n",
+		if (ie->id == WLAN_EID_VENDOR_SPECIFIC) {
+			/* len should be bigger than OUI length + one */
+			if (vndrie->len < (VS_IE_FIXED_HDR_LEN - TLV_HDR_LEN + 1)) {
+					brcmf_err("invalid vndr ie. length is too small %d\n",
+							vndrie->len);
+					goto next;
+			}
+			/* if wpa or wme ie, do not add ie */
+			if (!memcmp(vndrie->oui, (u8 *)WPA_OUI, TLV_OUI_LEN) &&
+					((vndrie->oui_type == WPA_OUI_TYPE) ||
+					(vndrie->oui_type == WME_OUI_TYPE))) {
+					brcmf_dbg(TRACE, "Found WPA/WME oui. Do not add it\n");
+					goto next;
+			}
+			memcpy(&parsed_info->vndrie, vndrie, sizeof(*vndrie));
+			brcmf_dbg(TRACE, "** OUI %02x %02x %02x, type 0x%02x\n",
 			  parsed_info->vndrie.oui[0],
 			  parsed_info->vndrie.oui[1],
 			  parsed_info->vndrie.oui[2],
 			  parsed_info->vndrie.oui_type);
+		} else {
+				brcmf_dbg(TRACE, "** IE type 0x%02x\n", ie->id);
+				memset(&parsed_info->vndrie, 0, sizeof(parsed_info->vndrie));
+				parsed_info->vndrie.id = ie->id;
+				parsed_info->vndrie.len = ie->len;
+		}
+		/* save vndr ie information */
+		parsed_info->ie_ptr = (char *)vndrie;
+		parsed_info->ie_len = vndrie->len + TLV_HDR_LEN;
+
+		vndr_ies->count++;
 
 		if (vndr_ies->count >= VNDR_IE_PARSE_LIMIT)
 			break;
@@ -4413,6 +4416,7 @@ s32 brcmf_vif_set_mgmt_ie(struct brcmf_cfg80211_vif *vif, s32 pktflag,
 	s32 i;
 	u8 *ptr;
 	int remained_buf_len;
+	s32 flag;
 
 	if (!vif)
 		return -ENODEV;
@@ -4484,15 +4488,22 @@ s32 brcmf_vif_set_mgmt_ie(struct brcmf_cfg80211_vif *vif, s32 pktflag,
 		/* make a command to delete old ie */
 		for (i = 0; i < old_vndr_ies.count; i++) {
 			vndrie_info = &old_vndr_ies.ie_info[i];
+			flag = pktflag;
+			if (vndrie_info->vndrie.id == WLAN_EID_VENDOR_SPECIFIC) {
+					brcmf_dbg(TRACE, "DEL ID : %d, Len: %d , OUI:%02x:%02x:%02x\n",
+									vndrie_info->vndrie.id,
+									vndrie_info->vndrie.len,
+									vndrie_info->vndrie.oui[0],
+									vndrie_info->vndrie.oui[1],
+									vndrie_info->vndrie.oui[2]);
+			} else {
+					brcmf_dbg(TRACE, "DEL ID : %d, Len: %d\n",
+									vndrie_info->vndrie.id,
+									vndrie_info->vndrie.len);
+					flag |= BRCMF_VNDR_IE_CUSTOM_FLAG;
+			}
 
-			brcmf_dbg(TRACE, "DEL ID : %d, Len: %d , OUI:%02x:%02x:%02x\n",
-				  vndrie_info->vndrie.id,
-				  vndrie_info->vndrie.len,
-				  vndrie_info->vndrie.oui[0],
-				  vndrie_info->vndrie.oui[1],
-				  vndrie_info->vndrie.oui[2]);
-
-			del_add_ie_buf_len = brcmf_vndr_ie(curr_ie_buf, pktflag,
+			del_add_ie_buf_len = brcmf_vndr_ie(curr_ie_buf, flag,
 							   vndrie_info->ie_ptr,
 							   vndrie_info->ie_len,
 							   "del");
@@ -4510,6 +4521,7 @@ s32 brcmf_vif_set_mgmt_ie(struct brcmf_cfg80211_vif *vif, s32 pktflag,
 
 		/* make a command to add new ie */
 		for (i = 0; i < new_vndr_ies.count; i++) {
+			flag = pktflag;
 			vndrie_info = &new_vndr_ies.ie_info[i];
 
 			/* verify remained buf size before copy data */
@@ -4521,15 +4533,21 @@ s32 brcmf_vif_set_mgmt_ie(struct brcmf_cfg80211_vif *vif, s32 pktflag,
 			}
 			remained_buf_len -= (vndrie_info->ie_len +
 					     VNDR_IE_VSIE_OFFSET);
+			if (vndrie_info->vndrie.id == WLAN_EID_VENDOR_SPECIFIC) {
+					brcmf_dbg(TRACE, "ADDED ID : %d, Len: %d, OUI:%02x:%02x:%02x\n",
+									vndrie_info->vndrie.id,
+									vndrie_info->vndrie.len,
+									vndrie_info->vndrie.oui[0],
+									vndrie_info->vndrie.oui[1],
+									vndrie_info->vndrie.oui[2]);
+			} else {
+					brcmf_dbg(TRACE, "ADDED ID : %d, Len: %d\n",
+									vndrie_info->vndrie.id,
+									vndrie_info->vndrie.len);
+					flag |= BRCMF_VNDR_IE_CUSTOM_FLAG;
+			}
 
-			brcmf_dbg(TRACE, "ADDED ID : %d, Len: %d, OUI:%02x:%02x:%02x\n",
-				  vndrie_info->vndrie.id,
-				  vndrie_info->vndrie.len,
-				  vndrie_info->vndrie.oui[0],
-				  vndrie_info->vndrie.oui[1],
-				  vndrie_info->vndrie.oui[2]);
-
-			del_add_ie_buf_len = brcmf_vndr_ie(curr_ie_buf, pktflag,
+			del_add_ie_buf_len = brcmf_vndr_ie(curr_ie_buf, flag,
 							   vndrie_info->ie_ptr,
 							   vndrie_info->ie_len,
 							   "add");
@@ -7159,6 +7177,7 @@ struct brcmf_cfg80211_info *brcmf_cfg80211_attach(struct brcmf_pub *drvr,
 	cfg->wiphy = wiphy;
 	cfg->ops = ops;
 	cfg->pub = drvr;
+	memset(&cfg->p2p, 0, sizeof(cfg->p2p));
 	init_vif_event(&cfg->vif_event);
 	INIT_LIST_HEAD(&cfg->vif_list);
 
