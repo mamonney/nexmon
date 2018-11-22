@@ -1827,6 +1827,9 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
 		brcmf_err("could not get wpa_auth (%d)\n", err);
 		return err;
 	}
+#define WLAN_AKM_SUITE_OSEN			SUITE(0x506f9a, 01)
+	brcmf_err("key mgmt val is %x\n", val);
+	brcmf_err("key mgmt akm suite is %x\n", sme->crypto.akm_suites[0]);
 	if (val & (WPA_AUTH_PSK | WPA_AUTH_UNSPECIFIED)) {
 		switch (sme->crypto.akm_suites[0]) {
 		case WLAN_AKM_SUITE_8021X:
@@ -1845,6 +1848,7 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
 	} else if (val & (WPA2_AUTH_PSK | WPA2_AUTH_UNSPECIFIED)) {
 		switch (sme->crypto.akm_suites[0]) {
 		case WLAN_AKM_SUITE_8021X:
+		case WLAN_AKM_SUITE_OSEN:
 			val = WPA2_AUTH_UNSPECIFIED;
 			if (sme->want_1x)
 				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
