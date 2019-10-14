@@ -552,6 +552,9 @@ static s32 brcmf_p2p_deinit_discovery(struct brcmf_p2p_info *p2p)
 
 	/* Set the discovery state to SCAN */
 	vif = p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif;
+	if (!vif) {
+			return 0;
+	}
 	(void)brcmf_p2p_set_discover_state(vif->ifp, WL_P2P_DISC_ST_SCAN, 0, 0);
 
 	/* Disable P2P discovery in the firmware */
@@ -923,6 +926,10 @@ brcmf_p2p_discover_listen(struct brcmf_p2p_info *p2p, u16 channel, u32 duration)
 
 	vif = p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif;
 	if (!vif) {
+		/* Switch to primary VIF - happens for non P2P action frames */
+		vif = p2p->bss_idx[P2PAPI_BSSCFG_PRIMARY].vif;
+	}
+	if (!vif) {
 		brcmf_err("Discovery is not set, so we have nothing to do\n");
 		err = -EPERM;
 		goto exit;
@@ -1140,7 +1147,10 @@ static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
 	brcmf_dbg(TRACE, "Enter\n");
 
 	pri_vif = p2p->bss_idx[P2PAPI_BSSCFG_PRIMARY].vif;
-
+	if (!pri_vif) {
+			brcmf_err("No VIF for searching channel\n");
+			return -1;
+	}
 	reinit_completion(&afx_hdl->act_frm_scan);
 	set_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL, &p2p->status);
 	afx_hdl->is_active = true;
@@ -1502,6 +1512,10 @@ static s32 brcmf_p2p_tx_action_frame(struct brcmf_p2p_info *p2p,
 	clear_bit(BRCMF_P2P_STATUS_ACTION_TX_NOACK, &p2p->status);
 
 	vif = p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif;
+	if (!vif) {
+		brcmf_dbg(TRACE, "No DEVICE VIF, changing to primary one");
+		vif = p2p->bss_idx[P2PAPI_BSSCFG_PRIMARY].vif;
+	}
 	err = brcmf_fil_bsscfg_data_set(vif->ifp, "actframe", af_params,
 					sizeof(*af_params));
 	if (err) {
@@ -1741,7 +1755,7 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
 	p2p->af_sent_channel = 0;
 	set_bit(BRCMF_P2P_STATUS_SENDING_ACT_FRAME, &p2p->status);
 	/* validate channel and p2p ies */
-	if (config_af_params.search_channel &&
+	if (p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif && config_af_params.search_channel &&
 	    IS_P2P_SOCIAL_CHANNEL(le32_to_cpu(af_params->channel)) &&
 	    p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif->saved_ie.probe_req_ie_len) {
 		afx_hdl = &p2p->afx_hdl;
@@ -2121,11 +2135,6 @@ static struct wireless_dev *brcmf_p2p_create_p2pdev(struct brcmf_p2p_info *p2p,
 
 	WARN_ON(p2p_ifp->bsscfgidx != bsscfgidx);
 
-	init_completion(&p2p->send_af_done);
-	INIT_WORK(&p2p->afx_hdl.afx_work, brcmf_p2p_afx_handler);
-	init_completion(&p2p->afx_hdl.act_frm_scan);
-	init_completion(&p2p->wait_next_af);
-
 	return &p2p_vif->wdev;
 
 fail:
@@ -2371,6 +2380,11 @@ s32 brcmf_p2p_attach(struct brcmf_cfg80211_info *cfg, bool p2pdev_forced)
 
 	pri_ifp = brcmf_get_ifp(cfg->pub, 0);
 	p2p->bss_idx[P2PAPI_BSSCFG_PRIMARY].vif = pri_ifp->vif;
+
+	init_completion(&p2p->send_af_done);
+	INIT_WORK(&p2p->afx_hdl.afx_work, brcmf_p2p_afx_handler);
+	init_completion(&p2p->afx_hdl.act_frm_scan);
+	init_completion(&p2p->wait_next_af);
 
 	if (p2pdev_forced) {
 		err_ptr = brcmf_p2p_create_p2pdev(p2p, NULL, NULL);
