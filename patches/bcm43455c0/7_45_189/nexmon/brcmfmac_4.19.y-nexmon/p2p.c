@@ -56,6 +56,7 @@
 
 #define P2P_VER			9	/* P2P version: 9=WiFi P2P v1.0 */
 #define P2P_PUB_AF_CATEGORY	0x04
+#define P2P_PUB_PAF_CATEGORY	0x09 /* Protected public action frame */
 #define P2P_PUB_AF_ACTION	0x09
 #define P2P_AF_CATEGORY		0x7f
 #define P2P_OUI			"\x50\x6F\x9A"	/* P2P OUI */
@@ -97,6 +98,7 @@
 
 /* P2P Service Discovery related */
 #define P2PSD_ACTION_CATEGORY		0x04	/* Public action frame */
+#define P2PSD_PROTECTED_ACTION_CATEGORY	0x09 	/* Protected public action frame */
 #define P2PSD_ACTION_ID_GAS_IREQ	0x0a	/* GAS Initial Request AF */
 #define P2PSD_ACTION_ID_GAS_IRESP	0x0b	/* GAS Initial Response AF */
 #define P2PSD_ACTION_ID_GAS_CREQ	0x0c	/* GAS Comback Request AF */
@@ -149,7 +151,7 @@ struct brcmf_p2p_scan_le {
 /**
  * struct brcmf_p2p_pub_act_frame - WiFi P2P Public Action Frame
  *
- * @category: P2P_PUB_AF_CATEGORY
+ * @category: P2P_PUB_AF_CATEGORY or P2P_PUB_PAF_CATEGORY
  * @action: P2P_PUB_AF_ACTION
  * @oui[3]: P2P_OUI
  * @oui_type: OUI type - P2P_VER
@@ -234,7 +236,8 @@ static bool brcmf_p2p_is_pub_action(void *frame, u32 frame_len)
 	if (frame_len < sizeof(struct brcmf_p2p_pub_act_frame) - 1)
 		return false;
 
-	if (pact_frm->category == P2P_PUB_AF_CATEGORY &&
+	if ((pact_frm->category == P2P_PUB_AF_CATEGORY ||
+			pact_frm->category == P2P_PUB_PAF_CATEGORY) &&
 	    pact_frm->action == P2P_PUB_AF_ACTION &&
 	    pact_frm->oui_type == P2P_VER &&
 	    memcmp(pact_frm->oui, P2P_OUI, P2P_OUI_LEN) == 0)
@@ -289,7 +292,8 @@ static bool brcmf_p2p_is_gas_action(void *frame, u32 frame_len)
 	if (frame_len < sizeof(struct brcmf_p2psd_gas_pub_act_frame) - 1)
 		return false;
 
-	if (sd_act_frm->category != P2PSD_ACTION_CATEGORY)
+	if (sd_act_frm->category != P2PSD_ACTION_CATEGORY &&
+					sd_act_frm->category != P2PSD_PROTECTED_ACTION_CATEGORY)
 		return false;
 
 	if (sd_act_frm->action == P2PSD_ACTION_ID_GAS_IREQ ||
